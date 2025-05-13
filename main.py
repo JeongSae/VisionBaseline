@@ -17,25 +17,6 @@ from torchmetrics.classification import Accuracy, AUROC, F1Score, Recall, Precis
 
 torch.backends.cudnn.enabled = False
 
-'''
-코드 수정 리스트
-
-1. Weight intialization 방법 선택 (모델 레이어 내 공통 적용)
-2. Dataset 선택 ( mnist, cifar100, flower, imagenet 등 다운로드 후 압축 풀도록 코드 수정 )
-3. Device, gpu parallel 선택 ( single, multi, DDP )
-4. report 출력 ( 그리드 형태로 예측, 예측 이미지, confusion matrix, roc-auc score, pr curve )
-5. Evaluation 코드 추가
-
-
-추가 기능 함수 리스트
-
-1. Multi-Scale Crop function (Optional) 추가 -> IPYNB 구현 완료, 추후 Test 단계 적용 예정
-2. Dense Evaluation function (Optional) 추가
-3. VGG 전체 점진적 학습 / Transfer Learning (Optional) 추가
-4. 데이터 증강 파라미터화 + 기본 데이터 증강 추가
-
-'''
-
 def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, dataloader, dataset_sizes, lr, decay_value, early_stop, device, save_best_state_path, model_version):
     since = time.time()
 
@@ -160,18 +141,26 @@ def main(config):
     
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Number of parameters: {total_params}")
+    print(f"Number of trainable parameters: {total_params}")
 
     # Define Dataset
-    train_dataset = flowers102_dataloader.ImageFolder(config.dataset_path, config.dataset_target_path, config.split_dataset_id, config.img_size, 'train')
-    valid_dataset = flowers102_dataloader.ImageFolder(config.dataset_path, config.dataset_target_path, config.split_dataset_id, config.img_size, 'valid')
+    print('Loading dataset...')
+    train_dataset = flowers102_dataloader.ImageFolder(config.dataset_path, config.dataset_target_path,
+                                                      config.split_dataset_id, config.img_size, 'train')
+    valid_dataset = flowers102_dataloader.ImageFolder(config.dataset_path, config.dataset_target_path,
+                                                      config.split_dataset_id, config.img_size, 'valid')
 
     # Define Dataloader
-    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
-    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=False,
+                                       num_workers=4)
+    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size,
+                                       shuffle=False, num_workers=4)
     loader = {'train' : train_dataloader, 'valid' : valid_dataloader}
     dataset_sizes = {x: len(loader[x]) for x in ['train', 'valid']}
+    print(f"Train dataset size: {dataset_sizes['train']}")
+    print(f"Valid dataset size: {dataset_sizes['valid']}")
     
+    print('Set Optimizer & Loss function...')
     # Define Optimizer & Loss function
     if config.optim == 'SGD':
         optimizer = torch.optim.SGD(list(model.parameters()), config.lr, 0.9, weight_decay=config.weight_decay)
@@ -186,14 +175,16 @@ def main(config):
         elif config.loss_function == 'FOCAL':
             criterion = losses.losses.BinaryFocalLoss()
     else:
-        if config.loss_function == 'CE':
+        if config.loss_function == 'CrossEntropy':
             criterion = torch.nn.CrossEntropyLoss()
         elif config.loss_function == 'FOCAL':
             criterion = losses.losses.FocalLoss()
+    print(f'Loss function: {config.loss_function}, Optimizer: {config.optim}')
 
     # Training
-    trained_model = train_model(model, criterion, optimizer, config.num_epochs, config.num_epochs_decay, config.num_class,
-                                loader, dataset_sizes, config.lr, config.lr_decay, config.early_stopping_rounds, device, config.save_state_path, config.model)
+    trained_model = train_model(model, criterion, optimizer, config.num_epochs, config.num_epochs_decay,
+                                config.num_class, loader, dataset_sizes, config.lr, config.lr_decay,
+                                config.early_stopping_rounds, device, config.save_state_path, config.model)
 
     print('Done.')
 
