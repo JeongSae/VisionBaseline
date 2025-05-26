@@ -320,8 +320,10 @@ def main(config):
                                                       config.split_dataset_id, config.img_size, 'valid')
 
     # Define Dataloader
-    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
-    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size,
+                                       shuffle=True, num_workers=4, pin_memory=True)
+    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size,
+                                       shuffle=False, num_workers=4, pin_memory=True)
     
     loader = {'train' : train_dataloader, 'valid' : valid_dataloader}
     dataset_sizes = {x: len(loader[x]) for x in ['train', 'valid']}
