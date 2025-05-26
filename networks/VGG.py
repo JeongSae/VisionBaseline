@@ -17,21 +17,6 @@ class ConvBnRelu(nn.Module):
         out = self.relu(out)
         return out
     
-class DenseBnRelu(nn.Module):
-    def __init__(self, in_ch, out_ch, drop_rate):
-        super(DenseBnRelu, self).__init__()
-        self.linear = nn.Linear(in_ch, out_ch)
-        self.bn = nn.BatchNorm1d(out_ch)
-        self.relu = nn.ReLU6(inplace=False)
-        self.drop = nn.Dropout(drop_rate)
-
-    def forward(self, x):
-        out = self.drop(x)
-        out = self.linear(out)
-        out = self.bn(out)
-        out = self.relu(out)
-        return out
-    
 class ConvRelu(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size, stride, padding, LPN=False):
         super(ConvRelu, self).__init__()
@@ -93,8 +78,8 @@ class VGG(nn.Module):
                         layers.append(ConvBnRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseBnRelu(self.out_dim, 4096, drop_rate))
-            classifier.append(DenseBnRelu(4096, 4096, drop_rate))
+            classifier.append(DenseRelu(self.out_dim, 4096, drop_rate))
+            classifier.append(DenseRelu(4096, 4096, drop_rate))
         elif 'LRN' in version:
             print('Create LRN VGG')
             ch_remember = 64
