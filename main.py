@@ -11,21 +11,91 @@ import dataloaders.flowers102_dataloader as flowers102_dataloader
 import losses.losses
 import networks.VGG as VGG
 import losses
+import seaborn as sns
+import matplotlib.pyplot as plt
 from torch.utils import data
 from tqdm import tqdm
 from torchmetrics.classification import Accuracy, AUROC, F1Score, Recall, Precision
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import confusion_matrix, precision_recall_curve, classification_report
 from hydra import main as hydra_main
 from omegaconf import DictConfig, OmegaConf
 
 torch.backends.cudnn.enabled = False
 
+def get_unique_train_folder(base_folder="runs", folder_prefix="train"):
+    """만약 base_folder 내에 train 폴더가 이미 존재한다면 train2, train3 등을 반환"""
+    train_folder = os.path.join(base_folder, folder_prefix)
+    counter = 1
+    while os.path.exists(train_folder):
+        train_folder = os.path.join(base_folder, f"{folder_prefix}{counter+1}")
+        counter += 1
+    os.makedirs(train_folder)
+    return train_folder
+
+# train 폴더와 weights 폴더 경로 생성
+TRAIN_RESULTS_FOLDER = get_unique_train_folder()  
+WEIGHTS_FOLDER = os.path.join(TRAIN_RESULTS_FOLDER, "weights")
+os.makedirs(WEIGHTS_FOLDER, exist_ok=True)
+
 def eval_model(model, dataloader, device):
+    model.eval()
+    all_preds = []
+    all_targets = []
     
-    
-    
-    
-    
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader):
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            outputs = model(inputs)
+            # multi-class : argmax, binary : threshold
+            if outputs.shape[1] > 1:
+                probs = torch.nn.functional.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+            else:
+                probs = torch.sigmoid(outputs)
+                preds = (probs > 0.5).long().squeeze(1)
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(labels.cpu().numpy())
+
+    # Compute and save confusion matrix (TRAIN_RESULTS_FOLDER에 저장)
+    cm = confusion_matrix(all_targets, all_preds)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    cm_path = os.path.join(TRAIN_RESULTS_FOLDER, "confusion_matrix.png")
+    plt.savefig(cm_path)
+    plt.close()
+    print(f"Confusion Matrix saved at: {cm_path}")
+
+    # Generate and save precision-recall curve (이진 분류일 경우)
+    if np.unique(all_targets).size == 2:
+        precision_vals, recall_vals, _ = precision_recall_curve(all_targets, all_preds)
+        plt.figure()
+        plt.plot(recall_vals, precision_vals, marker='.')
+        plt.title('Precision-Recall Curve')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        pr_path = os.path.join(TRAIN_RESULTS_FOLDER, "precision_recall_curve.png")
+        plt.savefig(pr_path)
+        plt.close()
+        print(f"Precision-Recall curve saved at: {pr_path}")
+    else:
+        print("Multi-class precision-recall curve not implemented.")
+
+    # Print classification report
+    report = classification_report(all_targets, all_preds)
+    print("Classification Report:")
+    print(report)
+
+    # Save current model weights in WEIGHTS_FOLDER (pth & pt)
+    pth_path = os.path.join(WEIGHTS_FOLDER, "model_best.pth")
+    pt_path = os.path.join(WEIGHTS_FOLDER, "model_best.pt")
+    torch.save(model.state_dict(), pth_path)
+    torch.save(model, pt_path)
+    print(f"Model weights saved: {pth_path} and {pt_path}")
+
     return None
 
 def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, dataloader, dataset_sizes, lr, decay_value, early_stop, device, save_best_state_path, model_version):
@@ -127,9 +197,9 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     best_train_metrics = epoch_train_metrics.copy()
                     best_valid_metrics = epoch_valid_metrics.copy()
                     
-                    # 모델 저장
-                    save_pth_path = os.path.join(save_best_state_path, model_version) + '/best_pth.pth'
-                    save_pt_path = os.path.join(save_best_state_path, model_version) + '/best_pt.pt'
+                    # 모델 저장 (WEIGHTS_FOLDER에 저장)
+                    save_pth_path = os.path.join(WEIGHTS_FOLDER, "best_pth.pth")
+                    save_pt_path = os.path.join(WEIGHTS_FOLDER, "best_pt.pt")
                     torch.save(best_model_wts, save_pth_path)
                     torch.save(model, save_pt_path)
                 else:
@@ -170,7 +240,7 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     # 가장 나은 모델 가중치 불러오기
     model.load_state_dict(best_model_wts)
     
-    # 학습 모델 기반 성능 지표 도출 및 저장
+    # 검증 데이터를 다시 평가하여 시각적 자료 저장 (eval_model 호출)
     eval_model(model, dataloader['valid'], device)
     
     return model
