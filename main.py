@@ -14,8 +14,19 @@ import losses
 from torch.utils import data
 from tqdm import tqdm
 from torchmetrics.classification import Accuracy, AUROC, F1Score, Recall, Precision
+from sklearn.metrics import classification_report, confusion_matrix
+from hydra import main as hydra_main
+from omegaconf import DictConfig, OmegaConf
 
 torch.backends.cudnn.enabled = False
+
+def eval_model(model, dataloader, device):
+    
+    
+    
+    
+    
+    return None
 
 def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, dataloader, dataset_sizes, lr, decay_value, early_stop, device, save_best_state_path, model_version):
     since = time.time()
@@ -28,17 +39,25 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     precision = Precision()
     
     best_model_wts = copy.deepcopy(model.state_dict())
-    best_loss = 10000.0
+    best_loss = 1e10  # 매우 큰 값으로 초기화
     
     # early stopping
     early_stopping_epochs = early_stop
     early_stop_counter = 0
 
+    # best 정보를 저장할 변수
+    best_epoch = -1
+    best_train_metrics = {}
+    best_valid_metrics = {}
+
     for epoch in range(num_epochs):
         print(f'Epoch {epoch} / {num_epochs - 1}')
         print('-' * 10)
 
-        # Select Phase
+        # 임시로 epoch마다의 metric 저장용 변수
+        epoch_train_metrics = {}
+        epoch_valid_metrics = {}
+
         for phase in ['train', 'valid']:
             if phase == 'train':
                 model.train()
@@ -50,38 +69,28 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
 
             # 데이터를 반복
             for inputs, labels in tqdm(dataloader[phase]):
-
-                # zero the parameter gradients
                 optimizer.zero_grad()
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # 순전파
                 outputs = model(inputs)
                 if num_class == 1:
                     outputs_prob = torch.nn.functional.sigmoid(outputs)
-
-                    # cal loss
                     loss = criterion(outputs_prob, labels)
                 else:
                     outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
-
-                    # cal loss
                     loss = criterion(outputs, labels)
 
-                # 학습 단계인 경우 역전파 + 최적화
                 if phase == 'train':
-                    # Backprop + optimize
                     loss.backward()
                     optimizer.step()
 
-                # metrics
                 running_loss += loss.item() * inputs.size(0)
-                running_acc += acc(outputs_prob.type('torch.FloatTensor'), labels.type('torch.IntTensor'))
-                running_auroc += auroc(outputs_prob.type('torch.FloatTensor'), labels.type('torch.IntTensor'))
-                running_f1 += f1(outputs_prob.type('torch.FloatTensor'), labels.type('torch.IntTensor'))
-                running_recall += recall(outputs_prob.type('torch.FloatTensor'), labels.type('torch.IntTensor'))
-                running_precision += precision(outputs_prob.type('torch.FloatTensor'), labels.type('torch.IntTensor'))
+                running_acc += acc(outputs_prob.float(), labels.int())
+                running_auroc += auroc(outputs_prob.float(), labels.int())
+                running_f1 += f1(outputs_prob.float(), labels.int())
+                running_recall += recall(outputs_prob.float(), labels.int())
+                running_precision += precision(outputs_prob.float(), labels.int())
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_acc / dataset_sizes[phase]
@@ -90,43 +99,80 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
             epoch_recall = running_recall / dataset_sizes[phase]
             epoch_precision = running_precision / dataset_sizes[phase]
 
-            print(f'{phase} Loss : {epoch_loss:.4f} Accuracy : {epoch_acc:.4f} AUROC : {epoch_auroc:.4f} F1-score : {epoch_auroc:.4f} Recall : {epoch_recall:.4f} Precision : {epoch_precision:.4f}')
+            print(f'{phase} Loss : {epoch_loss:.4f} Accuracy : {epoch_acc:.4f} AUROC : {epoch_auroc:.4f} F1-score : {epoch_f1:.4f} Recall : {epoch_recall:.4f} Precision : {epoch_precision:.4f}')
 
-            # 모델을 깊은 복사(deep copy)함
-            if phase == 'valid' and epoch_loss < best_loss:
-                best_loss = epoch_loss
-                best_model_wts = copy.deepcopy(model.state_dict())
-                early_stop_counter = 0
-                
-                # best model state/model save
-                save_pth_path = os.path.join(save_best_state_path, model_version) + '/best_pth.pth'
-                save_pt_path = os.path.join(save_best_state_path, model_version) + '/best_pt.pt'
-                torch.save(best_model_wts, save_pth_path)
-                torch.save(model, save_pt_path)
-                
-            # 검증 데이터셋의 손실이 이전보다 증가하는 경우 / epoch 별 체크
-            if phase == 'valid' and epoch_loss > best_loss:
-                early_stop_counter += 1
-                
-        # 조기 종료 조건 확인
+            if phase == 'train':
+                epoch_train_metrics = {
+                    'loss': epoch_loss,
+                    'accuracy': epoch_acc,
+                    'auroc': epoch_auroc,
+                    'f1': epoch_f1,
+                    'recall': epoch_recall,
+                    'precision': epoch_precision
+                }
+            else:  # valid phase
+                epoch_valid_metrics = {
+                    'loss': epoch_loss,
+                    'accuracy': epoch_acc,
+                    'auroc': epoch_auroc,
+                    'f1': epoch_f1,
+                    'recall': epoch_recall,
+                    'precision': epoch_precision
+                }
+                if epoch_loss < best_loss:
+                    best_loss = epoch_loss
+                    best_model_wts = copy.deepcopy(model.state_dict())
+                    early_stop_counter = 0
+                    best_epoch = epoch
+                    best_train_metrics = epoch_train_metrics.copy()
+                    best_valid_metrics = epoch_valid_metrics.copy()
+                    
+                    # 모델 저장
+                    save_pth_path = os.path.join(save_best_state_path, model_version) + '/best_pth.pth'
+                    save_pt_path = os.path.join(save_best_state_path, model_version) + '/best_pt.pt'
+                    torch.save(best_model_wts, save_pth_path)
+                    torch.save(model, save_pt_path)
+                else:
+                    early_stop_counter += 1
+
         if early_stop_counter >= early_stopping_epochs:
             print("Early Stopping!")
             break
                 
-        # Decay learning rate
         if epoch != 0 and epoch % decay_step == 0:
             lr -= decay_value
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
-            print ('Decay learning rate to lr: {}.'.format(lr))
-
+            print('Decay learning rate to lr: {}.'.format(lr))
         print()
 
     time_elapsed = time.time() - since
-    print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
+    print(f'\nTraining complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
 
-    # 가장 나은 모델 가중치를 불러옴
+    # 모델 학습이 종료된 후 best epoch와 해당 지표들을 출력
+    print("\nBest model found at epoch {}:".format(best_epoch))
+    print("Training Metrics at best epoch:")
+    print("  Loss     : {:.4f}".format(best_train_metrics.get('loss', 0)))
+    print("  Accuracy : {:.4f}".format(best_train_metrics.get('accuracy', 0)))
+    print("  AUROC    : {:.4f}".format(best_train_metrics.get('auroc', 0)))
+    print("  F1-score : {:.4f}".format(best_train_metrics.get('f1', 0)))
+    print("  Recall   : {:.4f}".format(best_train_metrics.get('recall', 0)))
+    print("  Precision: {:.4f}".format(best_train_metrics.get('precision', 0)))
+
+    print("Validation Metrics at best epoch:")
+    print("  Loss     : {:.4f}".format(best_valid_metrics.get('loss', 0)))
+    print("  Accuracy : {:.4f}".format(best_valid_metrics.get('accuracy', 0)))
+    print("  AUROC    : {:.4f}".format(best_valid_metrics.get('auroc', 0)))
+    print("  F1-score : {:.4f}".format(best_valid_metrics.get('f1', 0)))
+    print("  Recall   : {:.4f}".format(best_valid_metrics.get('recall', 0)))
+    print("  Precision: {:.4f}".format(best_valid_metrics.get('precision', 0)))
+
+    # 가장 나은 모델 가중치 불러오기
     model.load_state_dict(best_model_wts)
+    
+    # 학습 모델 기반 성능 지표 도출 및 저장
+    eval_model(model, dataloader['valid'], device)
+    
     return model
 
 def main(config):
@@ -151,10 +197,9 @@ def main(config):
                                                       config.split_dataset_id, config.img_size, 'valid')
 
     # Define Dataloader
-    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=False,
-                                       num_workers=4)
-    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size,
-                                       shuffle=False, num_workers=4)
+    train_dataloader = data.DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    valid_dataloader = data.DataLoader(dataset=valid_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    
     loader = {'train' : train_dataloader, 'valid' : valid_dataloader}
     dataset_sizes = {x: len(loader[x]) for x in ['train', 'valid']}
     print(f"Train dataset size: {dataset_sizes['train']}")
@@ -188,30 +233,10 @@ def main(config):
 
     print('Done.')
 
-if __name__ == '__main__':
-    # parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='vgg16_advanced', help='vgg11 ~ vgg19_advanced')
-    parser.add_argument('--img_size', type=int, default=112)
-    parser.add_argument('--img_channels', type=int, default=3)
-    parser.add_argument('--num_epochs', type=int, default=100)
-    parser.add_argument('--num_epochs_decay', type=int, default=10)
-    parser.add_argument('--early_stopping_rounds', type=int, default=10)
-    parser.add_argument('--lr_decay', type=float, default=0.0001)
-    parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--optim', type=str, default='SGD')
-    parser.add_argument('--num_class', type=int, default=102)
-    parser.add_argument('--drop_rate', type=float, default=0.5)
-    parser.add_argument('--dataset_path', type=str, default='datasets/flowers-102/jpg')
-    parser.add_argument('--dataset_target_path', type=str, default='datasets/flowers-102/imagelabels.mat')
-    parser.add_argument('--split_dataset_id', type=str, default='datasets/flowers-102/setid.mat')
-    parser.add_argument('--save_state_path', type=str, default='runs')
-    parser.add_argument('--weight_decay', type=float, default=0.0001)
-    parser.add_argument('--loss_function', type=str, default='CE', help='BCE, CE, FOCAL')
-    parser.add_argument('--focal_loss_gamma', type=float, default=2.0)
-    parser.add_argument('--focal_loss_alpha', type=float, default=0.25)
-    config = parser.parse_args()
+@hydra_main(config_path=".", config_name="config")
+def hydra_main_function(cfg: DictConfig):
+    print(OmegaConf.to_yaml(cfg))
+    main(cfg)
 
-    # main code
-    main(config)
+if __name__ == '__main__':
+    hydra_main_function()

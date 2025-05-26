@@ -28,3 +28,12 @@
 4. VGG 전체 점진적 학습 / Transfer Learning (Optional) 추가
 5. 데이터 증강 파라미터화 + 기본 데이터 증강 추가
 6. ResNet 구현
+
+
+---
+작업 내용
+---
+## 2025 05 26
+1. Hydra 적용
+2. Training 종료 후 레포트 출력
+3. Eval 함수 작성
