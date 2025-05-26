@@ -1,4 +1,6 @@
 import os
+os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'  # Disable Albumentations update warning
+
 import copy
 import time
 import torch
@@ -19,11 +21,17 @@ from torchmetrics.classification import Accuracy, AUROC, F1Score, Recall, Precis
 from sklearn.metrics import confusion_matrix, precision_recall_curve, classification_report
 from hydra import main as hydra_main
 from omegaconf import DictConfig, OmegaConf
+import warnings
+import wandb
+import gc
 
+warnings.filterwarnings("ignore", category=UserWarning)
 torch.backends.cudnn.enabled = False
 
 def get_unique_train_folder(base_folder="runs", folder_prefix="train"):
     """만약 base_folder 내에 train 폴더가 이미 존재한다면 train2, train3 등을 반환"""
+    if not os.path.exists(base_folder):
+        os.makedirs(base_folder)
     train_folder = os.path.join(base_folder, folder_prefix)
     counter = 1
     while os.path.exists(train_folder):
@@ -102,11 +110,11 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     since = time.time()
 
     # metrics
-    acc = Accuracy()
-    auroc = AUROC(task="multiclass", num_classes=num_class)
-    f1 = F1Score()
-    recall = Recall()
-    precision = Precision()
+    acc = Accuracy().to(device)
+    auroc = AUROC(task="multiclass", num_classes=num_class).to(device)
+    f1 = F1Score().to(device)
+    recall = Recall().to(device)
+    precision = Precision().to(device)
     
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = 1e10  # 매우 큰 값으로 초기화
@@ -129,6 +137,7 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
         epoch_valid_metrics = {}
 
         for phase in ['train', 'valid']:
+            # choose phase  
             if phase == 'train':
                 model.train()
             else:
@@ -137,30 +146,51 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
             # running score
             running_loss, running_acc, running_auroc, running_f1, running_recall, running_precision = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
-            # 데이터를 반복
-            for inputs, labels in tqdm(dataloader[phase]):
-                optimizer.zero_grad()
-                inputs = inputs.to(device)
-                labels = labels.to(device)
+            # 데이터를 반복적으로 불러오기
+            if phase == 'train':
+                for inputs, labels in tqdm(dataloader[phase]):
+                    optimizer.zero_grad()
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
 
-                outputs = model(inputs)
-                if num_class == 1:
-                    outputs_prob = torch.nn.functional.sigmoid(outputs)
-                    loss = criterion(outputs_prob, labels)
-                else:
-                    outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
-                    loss = criterion(outputs, labels)
-
-                if phase == 'train':
+                    outputs = model(inputs)
+                    if num_class == 1:
+                        outputs_prob = torch.nn.functional.sigmoid(outputs)
+                        loss = criterion(outputs_prob, labels)
+                    else:
+                        outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
+                        loss = criterion(outputs, labels)
+                    
                     loss.backward()
                     optimizer.step()
 
-                running_loss += loss.item() * inputs.size(0)
-                running_acc += acc(outputs_prob.float(), labels.int())
-                running_auroc += auroc(outputs_prob.float(), labels.int())
-                running_f1 += f1(outputs_prob.float(), labels.int())
-                running_recall += recall(outputs_prob.float(), labels.int())
-                running_precision += precision(outputs_prob.float(), labels.int())
+                    running_loss += loss.item() * inputs.size(0)
+                    running_acc += acc(outputs_prob.float(), labels.int())
+                    running_auroc += auroc(outputs_prob.float(), labels.int())
+                    running_f1 += f1(outputs_prob.float(), labels.int())
+                    running_recall += recall(outputs_prob.float(), labels.int())
+                    running_precision += precision(outputs_prob.float(), labels.int())
+            else :
+                with torch.no_grad():
+                    for inputs, labels in tqdm(dataloader[phase]):
+                        optimizer.zero_grad()
+                        inputs = inputs.to(device)
+                        labels = labels.to(device)
+
+                        outputs = model(inputs)
+                        if num_class == 1:
+                            outputs_prob = torch.nn.functional.sigmoid(outputs)
+                            loss = criterion(outputs_prob, labels)
+                        else:
+                            outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
+                            loss = criterion(outputs, labels)
+
+                        running_loss += loss.item() * inputs.size(0)
+                        running_acc += acc(outputs_prob.float(), labels.int())
+                        running_auroc += auroc(outputs_prob.float(), labels.int())
+                        running_f1 += f1(outputs_prob.float(), labels.int())
+                        running_recall += recall(outputs_prob.float(), labels.int())
+                        running_precision += precision(outputs_prob.float(), labels.int())
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_acc / dataset_sizes[phase]
@@ -204,7 +234,24 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     torch.save(model, save_pt_path)
                 else:
                     early_stop_counter += 1
-
+        
+            # Garbage collection to free up memory every epoch
+            gc.collect()
+            torch.cuda.empty_cache()
+        
+        # Log metrics to wandb
+        wandb.log({
+            "epoch": epoch,
+            "train_loss": epoch_train_metrics.get("loss"),
+            "valid_loss": epoch_valid_metrics.get("loss"),
+            "train_accuracy": epoch_train_metrics.get("accuracy"),
+            "valid_accuracy": epoch_valid_metrics.get("accuracy"),
+            "train_auroc": epoch_train_metrics.get("auroc"),
+            "valid_auroc": epoch_valid_metrics.get("auroc"),
+            "train_f1": epoch_train_metrics.get("f1"),
+            "valid_f1": epoch_valid_metrics.get("f1")
+        })
+        
         if early_stop_counter >= early_stopping_epochs:
             print("Early Stopping!")
             break
@@ -246,6 +293,9 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     return model
 
 def main(config):
+    # Initialize wandb with your project name and config
+    wandb.init(project="VisionBaseline", config=OmegaConf.to_container(config, resolve=True))
+    
     # Define Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -258,6 +308,9 @@ def main(config):
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Number of trainable parameters: {total_params}")
+    
+    # Optionally, watch the model
+    wandb.watch(model)
 
     # Define Dataset
     print('Loading dataset...')
@@ -277,6 +330,7 @@ def main(config):
     
     print('Set Optimizer & Loss function...')
     # Define Optimizer & Loss function
+    optimizer = None
     if config.optim == 'SGD':
         optimizer = torch.optim.SGD(list(model.parameters()), config.lr, 0.9, weight_decay=config.weight_decay)
     elif config.optim == 'Adam':
@@ -284,13 +338,14 @@ def main(config):
     elif config.optim == 'AdamW':
         optimizer = torch.optim.AdamW(list(model.parameters()), config.lr, [0.9, 0.999], weight_decay=config.weight_decay)
 
+    criterion = None
     if config.num_class == 1:
         if config.loss_function == 'BCE':
             criterion = torch.nn.BCEWithLogitsLoss()
         elif config.loss_function == 'FOCAL':
             criterion = losses.losses.BinaryFocalLoss()
     else:
-        if config.loss_function == 'CrossEntropy':
+        if config.loss_function == 'CE':
             criterion = torch.nn.CrossEntropyLoss()
         elif config.loss_function == 'FOCAL':
             criterion = losses.losses.FocalLoss()

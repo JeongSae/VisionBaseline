@@ -46,8 +46,8 @@ class ImageFolder(data.Dataset):
         transform = A.Compose([
             A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
             A.Resize(height=self.image_size, width=self.image_size),
-            A.Normalize(),
-            ToTensorV2()
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
         ])
 
         # preprocessing

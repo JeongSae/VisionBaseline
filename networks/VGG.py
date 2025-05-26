@@ -73,11 +73,11 @@ class VGG(nn.Module):
         out_channels, layers, classifier = 64, [], []
         
         if num_channels[1] == 32:
-            out_dim = 512
+            self.out_dim = 512
         elif num_channels[1] == 112:
-            out_dim = 4608
+            self.out_dim = 4608
         elif num_channels[1] == 224:
-            out_dim = 25088
+            self.out_dim = 25088
         
         # get layers
         # in_ch, out_ch, kernel_size, stride, padding
@@ -93,7 +93,7 @@ class VGG(nn.Module):
                         layers.append(ConvBnRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseBnRelu(out_dim, 4096, drop_rate))
+            classifier.append(DenseBnRelu(self.out_dim, 4096, drop_rate))
             classifier.append(DenseBnRelu(4096, 4096, drop_rate))
         elif 'LRN' in version:
             print('Create LRN VGG')
@@ -107,7 +107,7 @@ class VGG(nn.Module):
                         layers.append(ConvRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseRelu(out_dim, 4096, drop_rate))
+            classifier.append(DenseRelu(self.out_dim, 4096, drop_rate))
             classifier.append(DenseRelu(4096, 4096, drop_rate))
         elif 'v1' in version:
             print('Create VGG16 Version 1')
@@ -124,7 +124,7 @@ class VGG(nn.Module):
                         layers.append(ConvRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseRelu(out_dim, 4096, drop_rate))
+            classifier.append(DenseRelu(self.out_dim, 4096, drop_rate))
             classifier.append(DenseRelu(4096, 4096, drop_rate))
         elif 'v2' in version:
             print('Create VGG16 Version 2')
@@ -138,7 +138,7 @@ class VGG(nn.Module):
                         layers.append(ConvRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseRelu(out_dim, 4096, drop_rate))
+            classifier.append(DenseRelu(self.out_dim, 4096, drop_rate))
             classifier.append(DenseRelu(4096, 4096, drop_rate))
         else:
             print('Create Normal Version')
@@ -152,7 +152,7 @@ class VGG(nn.Module):
                         layers.append(ConvRelu(ch_remember, out_channels * depth[i], 3, 1, 'same'))
                         ch_remember = out_channels * depth[i]
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            classifier.append(DenseRelu(out_dim, 4096, drop_rate))
+            classifier.append(DenseRelu(self.out_dim, 4096, drop_rate))
             classifier.append(DenseRelu(4096, 4096, drop_rate))
         
         # create model

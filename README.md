@@ -37,3 +37,5 @@
 1. Hydra 적용
 2. Training 종료 후 레포트 출력
 3. Eval 함수 작성
+4. Training 과정 내 메모리 증가 이슈 해결 (gc, no grad)
+5. wandb 연동, runs/train 및 runs/train/weights 생성 및 관리 추가

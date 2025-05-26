@@ -7,13 +7,13 @@ num_epochs_decay: 10
 early_stopping_rounds: 10
 lr_decay: 0.0001
 lr: 0.001
-batch_size: 4
+batch_size: 2
 optim: SGD
 num_class: 102
 drop_rate: 0.5
-dataset_path: "datasets/flowers-102/jpg"
-dataset_target_path: "datasets/flowers-102/imagelabels.mat"
-split_dataset_id: "datasets/flowers-102/setid.mat"
+dataset_path: "D:\\Jupyter_notebook\\study\\VisionDatasets\\flowers-102/jpg"
+dataset_target_path: "D:\\Jupyter_notebook\\study\\VisionDatasets\\flowers-102/imagelabels.mat"
+split_dataset_id: "D:\\Jupyter_notebook\\study\\VisionDatasets\\flowers-102/setid.mat"
 save_state_path: "runs"
 weight_decay: 0.0001
 loss_function: "CE"  # BCE, CE, FOCAL
