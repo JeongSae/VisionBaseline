@@ -145,9 +145,11 @@ class VGG(nn.Module):
         self.flatten = nn.Flatten()
         self.layers = nn.Sequential(*layers)
         self.classifier = nn.Sequential(*classifier)
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
         
     def forward(self, x):
         out = self.layers(x)
+        out = self.avgpool(out)
         out = self.flatten(out)
         out = self.classifier(out)
         return out

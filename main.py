@@ -110,11 +110,11 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     since = time.time()
 
     # metrics
-    acc = Accuracy().to(device)
+    acc = Accuracy(task="multiclass", num_classes=num_class).to(device)
     auroc = AUROC(task="multiclass", num_classes=num_class).to(device)
-    f1 = F1Score().to(device)
-    recall = Recall().to(device)
-    precision = Precision().to(device)
+    f1 = F1Score(task="multiclass", num_classes=num_class).to(device)
+    recall = Recall(task="multiclass", num_classes=num_class).to(device)
+    precision = Precision(task="multiclass", num_classes=num_class).to(device)
     
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = 1e10  # 매우 큰 값으로 초기화
@@ -156,7 +156,7 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     outputs = model(inputs)
                     if num_class == 1:
                         outputs_prob = torch.nn.functional.sigmoid(outputs)
-                        loss = criterion(outputs_prob, labels)
+                        loss = criterion(outputs, labels)
                     else:
                         outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
                         loss = criterion(outputs, labels)
@@ -299,15 +299,15 @@ def main(config):
     # Define Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # # Define Network
-    # if 'vgg' in config.model:
-    #     model = VGG.vgg(config.num_class,
-    #                    (config.img_channels, config.img_size, config.img_size),
-    #                     config.drop_rate, config.model)
+    # Define Network
+    if 'vgg' in config.model:
+        model = VGG.vgg(config.num_class,
+                       (config.img_channels, config.img_size, config.img_size),
+                        config.drop_rate, config.model)
     
-    # Testing with torchvision's VGG model
-    model = torchvision.models.vgg16(pretrained=True)
-    model.classifier[6] = nn.Linear(in_features=4096, out_features=config.num_class)
+    # # Testing with torchvision's VGG model
+    # model = torchvision.models.vgg16(pretrained=True)
+    # model.classifier[6] = nn.Linear(in_features=4096, out_features=config.num_class)
     
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
