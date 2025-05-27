@@ -18,7 +18,9 @@ import matplotlib.pyplot as plt
 from torch.utils import data
 from tqdm import tqdm
 from torchmetrics.classification import Accuracy, AUROC, F1Score, Recall, Precision
-from sklearn.metrics import confusion_matrix, precision_recall_curve, classification_report
+from sklearn.metrics import roc_curve, auc, f1_score, precision_score, recall_score, confusion_matrix
+from sklearn.preprocessing import label_binarize
+from sklearn.metrics import precision_recall_curve as pr_curve
 from hydra import main as hydra_main
 from omegaconf import DictConfig, OmegaConf
 import warnings
@@ -40,15 +42,11 @@ def get_unique_train_folder(base_folder="runs", folder_prefix="train"):
     os.makedirs(train_folder)
     return train_folder
 
-# train 폴더와 weights 폴더 경로 생성
-TRAIN_RESULTS_FOLDER = get_unique_train_folder()  
-WEIGHTS_FOLDER = os.path.join(TRAIN_RESULTS_FOLDER, "weights")
-os.makedirs(WEIGHTS_FOLDER, exist_ok=True)
-
-def eval_model(model, dataloader, device):
+def eval_model(model, dataloader, device, TRAIN_RESULTS_FOLDER, WEIGHTS_FOLDER):
     model.eval()
     all_preds = []
     all_targets = []
+    all_probs = []  # 누적된 확률 값 저장
     
     with torch.no_grad():
         for inputs, labels in tqdm(dataloader):
@@ -64,10 +62,11 @@ def eval_model(model, dataloader, device):
                 preds = (probs > 0.5).long().squeeze(1)
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(labels.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
 
-    # Compute and save confusion matrix (TRAIN_RESULTS_FOLDER에 저장)
+    # Compute and save confusion matrix
     cm = confusion_matrix(all_targets, all_preds)
-    plt.figure(figsize=(10, 8))
+    plt.figure(figsize=(10,8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
     plt.title('Confusion Matrix')
     plt.xlabel('Predicted')
@@ -76,12 +75,89 @@ def eval_model(model, dataloader, device):
     plt.savefig(cm_path)
     plt.close()
     print(f"Confusion Matrix saved at: {cm_path}")
+    
+    # --- ROC and PR curves ---
+    all_targets = np.array(all_targets)
+    all_probs = np.array(all_probs)
+    num_unique = np.unique(all_targets).size
+    if num_unique > 2:
+        # Multi-class ROC/PR: Binarize ground truth
+        classes = np.unique(all_targets)
+        n_classes = len(classes)
+        y_test = label_binarize(all_targets, classes=classes)  # shape: (n_samples, n_classes)
+        # all_probs shape: (n_samples, n_classes) is assumed
 
-    # Generate and save precision-recall curve (이진 분류일 경우)
-    if np.unique(all_targets).size == 2:
-        precision_vals, recall_vals, _ = precision_recall_curve(all_targets, all_preds)
+        # Micro-average ROC
+        fpr_micro, tpr_micro, _ = roc_curve(y_test.ravel(), all_probs.ravel())
+        roc_auc_micro = auc(fpr_micro, tpr_micro)
+        # Per-class ROC and macro-average ROC
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(n_classes):
+            fpr[i], tpr[i], _ = roc_curve(y_test[:, i], all_probs[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+        all_fpr = np.unique(np.concatenate([fpr[i] for i in range(n_classes)]))
+        mean_tpr = np.zeros_like(all_fpr)
+        for i in range(n_classes):
+            mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+        mean_tpr /= n_classes
+        fpr_macro = all_fpr
+        tpr_macro = mean_tpr
+        roc_auc_macro = auc(fpr_macro, tpr_macro)
+        
+        # Plot ROC curves
         plt.figure()
-        plt.plot(recall_vals, precision_vals, marker='.')
+        plt.plot(fpr_micro, tpr_micro, color='deeppink', linestyle=':', linewidth=4,
+                 label='Micro-average ROC (AUC = {0:0.2f})'.format(roc_auc_micro))
+        plt.plot(fpr_macro, tpr_macro, color='navy', linestyle='-', linewidth=4,
+                 label='Macro-average ROC (AUC = {0:0.2f})'.format(roc_auc_macro))
+        plt.plot([0,1],[0,1],'k--',lw=2)
+        plt.xlim([0.0,1.0])
+        plt.ylim([0.0,1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curves (Multi-class)')
+        plt.legend(loc="lower right")
+        roc_path = os.path.join(TRAIN_RESULTS_FOLDER, "roc_curves.png")
+        plt.savefig(roc_path)
+        plt.close()
+        print(f"ROC curves saved at: {roc_path}")
+        
+        # Micro-average PR
+        precision_micro, recall_micro, _ = pr_curve(y_test.ravel(), all_probs.ravel())
+        pr_auc_micro = auc(recall_micro, precision_micro)
+        # Per-class PR and macro-average PR
+        precision_dict = dict()
+        recall_dict = dict()
+        for i in range(n_classes):
+            precision_dict[i], recall_dict[i], _ = pr_curve(y_test[:, i], all_probs[:, i])
+        all_recall = np.unique(np.concatenate([recall_dict[i] for i in range(n_classes)]))
+        mean_precision = np.zeros_like(all_recall)
+        for i in range(n_classes):
+            mean_precision += np.interp(all_recall, recall_dict[i], precision_dict[i])
+        mean_precision /= n_classes
+        pr_auc_macro = auc(all_recall, mean_precision)
+        
+        # Plot PR curves
+        plt.figure()
+        plt.plot(recall_micro, precision_micro, color='green', linestyle=':', linewidth=4,
+                 label='Micro-average PR (AUC = {0:0.2f})'.format(pr_auc_micro))
+        plt.plot(all_recall, mean_precision, color='blue', linestyle='-', linewidth=4,
+                 label='Macro-average PR (AUC = {0:0.2f})'.format(pr_auc_macro))
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curves (Multi-class)')
+        plt.legend(loc="lower left")
+        pr_multi_path = os.path.join(TRAIN_RESULTS_FOLDER, "pr_curves_multiclass.png")
+        plt.savefig(pr_multi_path)
+        plt.close()
+        print(f"Multi-class PR curves saved at: {pr_multi_path}")
+    else:
+        # Binary classification: 기존 precision-recall curve already exists
+        precision_vals, recall_vals, _ = pr_curve(all_targets, all_probs.ravel())
+        plt.figure()
+        plt.plot(recall_vals, precision_vals, marker='.', label='PR curve')
         plt.title('Precision-Recall Curve')
         plt.xlabel('Recall')
         plt.ylabel('Precision')
@@ -89,32 +165,78 @@ def eval_model(model, dataloader, device):
         plt.savefig(pr_path)
         plt.close()
         print(f"Precision-Recall curve saved at: {pr_path}")
-    else:
-        print("Multi-class precision-recall curve not implemented.")
-
-    # Print classification report
-    report = classification_report(all_targets, all_preds)
-    print("Classification Report:")
-    print(report)
-
+        
+        # Generate threshold plots for binary classification
+        thresholds = np.linspace(0, 1, 100)
+        f1_list = []
+        precision_list = []
+        recall_list = []
+        # all_probs.ravel() is assumed to be probability of positive class
+        binary_probs = all_probs.ravel()
+        for t in thresholds:
+            pred_thresh = (binary_probs >= t).astype(int)
+            f1_list.append(f1_score(all_targets, pred_thresh))
+            precision_list.append(precision_score(all_targets, pred_thresh))
+            recall_list.append(recall_score(all_targets, pred_thresh))
+            
+        # Plot F1 vs. Threshold
+        plt.figure()
+        plt.plot(thresholds, f1_list, label="F1 score")
+        plt.xlabel("Threshold")
+        plt.ylabel("F1 score")
+        plt.title("F1 Score vs Threshold")
+        plt.legend()
+        f1_thresh_path = os.path.join(TRAIN_RESULTS_FOLDER, "f1_vs_threshold.png")
+        plt.savefig(f1_thresh_path)
+        plt.close()
+        print(f"F1 vs Threshold curve saved at: {f1_thresh_path}")
+        
+        # Plot Precision vs. Threshold
+        plt.figure()
+        plt.plot(thresholds, precision_list, label="Precision")
+        plt.xlabel("Threshold")
+        plt.ylabel("Precision")
+        plt.title("Precision vs Threshold")
+        plt.legend()
+        precision_thresh_path = os.path.join(TRAIN_RESULTS_FOLDER, "precision_vs_threshold.png")
+        plt.savefig(precision_thresh_path)
+        plt.close()
+        print(f"Precision vs Threshold curve saved at: {precision_thresh_path}")
+        
+        # Plot Recall vs. Threshold
+        plt.figure()
+        plt.plot(thresholds, recall_list, label="Recall")
+        plt.xlabel("Threshold")
+        plt.ylabel("Recall")
+        plt.title("Recall vs Threshold")
+        plt.legend()
+        recall_thresh_path = os.path.join(TRAIN_RESULTS_FOLDER, "recall_vs_threshold.png")
+        plt.savefig(recall_thresh_path)
+        plt.close()
+        print(f"Recall vs Threshold curve saved at: {recall_thresh_path}")
+    
     # Save current model weights in WEIGHTS_FOLDER (pth & pt)
     pth_path = os.path.join(WEIGHTS_FOLDER, "model_best.pth")
     pt_path = os.path.join(WEIGHTS_FOLDER, "model_best.pt")
+    print(os.getcwd())
+    print(f"Absolute WEIGHTS_FOLDER: {os.path.abspath(WEIGHTS_FOLDER)}")
     torch.save(model.state_dict(), pth_path)
     torch.save(model, pt_path)
     print(f"Model weights saved: {pth_path} and {pt_path}")
-
+    
     return None
 
-def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, dataloader, dataset_sizes, lr, decay_value, early_stop, device, save_best_state_path, model_version):
+def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, dataloader, dataset_sizes,
+                lr, decay_value, early_stop, device, save_best_state_path, model_version,
+                TRAIN_RESULTS_FOLDER, WEIGHTS_FOLDER):
     since = time.time()
 
     # metrics
-    acc = Accuracy(task="multiclass", num_classes=num_class).to(device)
+    acc = Accuracy(task="multiclass", num_classes=num_class, top_k=1).to(device)
     auroc = AUROC(task="multiclass", num_classes=num_class).to(device)
-    f1 = F1Score(task="multiclass", num_classes=num_class).to(device)
-    recall = Recall(task="multiclass", num_classes=num_class).to(device)
-    precision = Precision(task="multiclass", num_classes=num_class).to(device)
+    f1 = F1Score(task="multiclass", num_classes=num_class, top_k=1).to(device)
+    recall = Recall(task="multiclass", num_classes=num_class, top_k=1).to(device)
+    precision = Precision(task="multiclass", num_classes=num_class, top_k=1).to(device)
     
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = 1e10  # 매우 큰 값으로 초기화
@@ -164,12 +286,15 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     loss.backward()
                     optimizer.step()
 
+                    # Loss 
                     running_loss += loss.item() * inputs.size(0)
-                    running_acc += acc(outputs_prob.float(), labels.int())
-                    running_auroc += auroc(outputs_prob.float(), labels.int())
-                    running_f1 += f1(outputs_prob.float(), labels.int())
-                    running_recall += recall(outputs_prob.float(), labels.int())
-                    running_precision += precision(outputs_prob.float(), labels.int())
+                    
+                    # Metrics
+                    acc(outputs_prob.float(), labels.int())
+                    auroc(outputs_prob.float(), labels.int())
+                    f1(outputs_prob.float(), labels.int())
+                    recall(outputs_prob.float(), labels.int())
+                    precision(outputs_prob.float(), labels.int())
             else :
                 with torch.no_grad():
                     for inputs, labels in tqdm(dataloader[phase]):
@@ -185,19 +310,22 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                             outputs_prob = torch.nn.functional.softmax(outputs, dim=1)
                             loss = criterion(outputs, labels)
 
+                        # Loss 
                         running_loss += loss.item() * inputs.size(0)
-                        running_acc += acc(outputs_prob.float(), labels.int())
-                        running_auroc += auroc(outputs_prob.float(), labels.int())
-                        running_f1 += f1(outputs_prob.float(), labels.int())
-                        running_recall += recall(outputs_prob.float(), labels.int())
-                        running_precision += precision(outputs_prob.float(), labels.int())
+                        
+                        # Metrics
+                        acc(outputs_prob.float(), labels.int())
+                        auroc(outputs_prob.float(), labels.int())
+                        f1(outputs_prob.float(), labels.int())
+                        recall(outputs_prob.float(), labels.int())
+                        precision(outputs_prob.float(), labels.int())
 
             epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_acc / dataset_sizes[phase]
-            epoch_auroc = running_auroc / dataset_sizes[phase]
-            epoch_f1 = running_f1 / dataset_sizes[phase]
-            epoch_recall = running_recall / dataset_sizes[phase]
-            epoch_precision = running_precision / dataset_sizes[phase]
+            epoch_acc = acc.compute()
+            epoch_auroc = auroc.compute()
+            epoch_f1 = f1.compute()
+            epoch_recall = recall.compute()
+            epoch_precision = precision.compute()
 
             print(f'{phase} Loss : {epoch_loss:.4f} Accuracy : {epoch_acc:.4f} AUROC : {epoch_auroc:.4f} F1-score : {epoch_f1:.4f} Recall : {epoch_recall:.4f} Precision : {epoch_precision:.4f}')
 
@@ -228,13 +356,20 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     best_valid_metrics = epoch_valid_metrics.copy()
                     
                     # 모델 저장 (WEIGHTS_FOLDER에 저장)
-                    save_pth_path = os.path.join(WEIGHTS_FOLDER, "best_pth.pth")
-                    save_pt_path = os.path.join(WEIGHTS_FOLDER, "best_pt.pt")
+                    save_pth_path = os.path.join(WEIGHTS_FOLDER, "training_best.pth")
+                    save_pt_path = os.path.join(WEIGHTS_FOLDER, "training_best.pt")
                     torch.save(best_model_wts, save_pth_path)
                     torch.save(model, save_pt_path)
                 else:
                     early_stop_counter += 1
         
+            # reset metrics for next epoch
+            acc.reset()
+            auroc.reset()
+            f1.reset()
+            recall.reset()
+            precision.reset()
+            
             # Garbage collection to free up memory every epoch
             gc.collect()
             torch.cuda.empty_cache()
@@ -288,26 +423,32 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     model.load_state_dict(best_model_wts)
     
     # 검증 데이터를 다시 평가하여 시각적 자료 저장 (eval_model 호출)
-    eval_model(model, dataloader['valid'], device)
+    print("Save results... : {}".format(TRAIN_RESULTS_FOLDER))
+    print("Save Models... : {}".format(WEIGHTS_FOLDER))
+    eval_model(model, dataloader['valid'], device, TRAIN_RESULTS_FOLDER, WEIGHTS_FOLDER)
     
     return model
 
 def main(config):
+    TRAIN_RESULTS_FOLDER = get_unique_train_folder()  
+    WEIGHTS_FOLDER = os.path.join(TRAIN_RESULTS_FOLDER, "weights")
+    os.makedirs(WEIGHTS_FOLDER, exist_ok=True)
+    
     # Initialize wandb with your project name and config
     wandb.init(project="VisionBaseline", config=OmegaConf.to_container(config, resolve=True))
     
     # Define Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Define Network
-    if 'vgg' in config.model:
-        model = VGG.vgg(config.num_class,
-                       (config.img_channels, config.img_size, config.img_size),
-                        config.drop_rate, config.model)
+    # # Define Network
+    # if 'vgg' in config.model:
+    #     model = VGG.vgg(config.num_class,
+    #                    (config.img_channels, config.img_size, config.img_size),
+    #                     config.drop_rate, config.model)
     
-    # # Testing with torchvision's VGG model
-    # model = torchvision.models.vgg16(pretrained=True)
-    # model.classifier[6] = nn.Linear(in_features=4096, out_features=config.num_class)
+    # Testing with torchvision's VGG model
+    model = torchvision.models.vgg16(pretrained=True)
+    model.classifier[6] = nn.Linear(in_features=4096, out_features=config.num_class)
     
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
@@ -360,7 +501,8 @@ def main(config):
     # Training
     trained_model = train_model(model, criterion, optimizer, config.num_epochs, config.num_epochs_decay,
                                 config.num_class, loader, dataset_sizes, config.lr, config.lr_decay,
-                                config.early_stopping_rounds, device, config.save_state_path, config.model)
+                                config.early_stopping_rounds, device, config.save_state_path, config.model,
+                                TRAIN_RESULTS_FOLDER, WEIGHTS_FOLDER)
 
     print('Done.')
 

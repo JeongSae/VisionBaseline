@@ -1,3 +1,9 @@
+hydra:
+  run:
+    dir: ...
+  launcher:
+    _target_: hydra.launcher.basic.BasicLauncher
+
 # filepath: d:\Jupyter_notebook\study\VisionBaseline\config.yaml
 model: vgg16_advanced
 img_size: 224

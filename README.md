@@ -3,12 +3,14 @@
 ---
 작업 내용
 ---
-## 2025 05 26
+## 2025 05
 1. Hydra 적용
 2. Training 종료 후 레포트 출력
+   1. micro/macro-average ROC와 PR 커브를 계산
 3. Eval 함수 작성
 4. Training 과정 내 메모리 증가 이슈 해결 (gc, no grad)
 5. wandb 연동, runs/train 및 runs/train/weights 생성 및 관리 추가
+   1. Hydra 폴더 중복 생성 수정 -> Main() 내부로 이동
 
 ---
 코드 수정 리스트
@@ -19,13 +21,14 @@
 ~~4. report 출력 ( 그리드 형태로 예측, 예측 이미지, confusion matrix, roc-auc score, pr curve )~~
 ~~5. Evaluation 코드 추가~~
 ~~6. Validation 단계는 torch.no_grad() 블록으로 감싸기~~
-7. DataLoader 설정 (drop_last, shuffle)
+~~7. DataLoader 설정 (drop_last, shuffle)~~
 8. 학습/검증 루프 분리 및 재사용성 개선
-9. LR 스케줄러 도입 + 기타 스케줄러
+   1. 리팩토링
+9.  LR 스케줄러 도입 + 기타 스케줄러
 ~~10. 로깅 및 시각화 (텐서보드, wandb)~~
 ~~11. Config 관리 개선 (Hydra)~~
-12. 타입 힌트 & Docstring 추가 (함수 별)
-13. 메트릭 초기화/집계 로직 개선
+1.  타입 힌트 & Docstring 추가 (함수 별)
+2.  메트릭 초기화/집계 로직 개선
 ~~14. ultralytics 개념처럼, 모델 세팅과 관련된 내용들 제안~~
 ~~15. 실험 관리 및 학습 완료 내용 시각화 (runs -> metrics, weight 등)~~
 
