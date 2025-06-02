@@ -232,11 +232,11 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
     since = time.time()
 
     # metrics
-    acc = Accuracy(task="multiclass", num_classes=num_class, top_k=1).to(device)
+    acc = Accuracy(task="multiclass", average='micro', num_classes=num_class, top_k=1).to(device)
     auroc = AUROC(task="multiclass", num_classes=num_class).to(device)
-    f1 = F1Score(task="multiclass", num_classes=num_class, top_k=1).to(device)
-    recall = Recall(task="multiclass", num_classes=num_class, top_k=1).to(device)
-    precision = Precision(task="multiclass", num_classes=num_class, top_k=1).to(device)
+    f1 = F1Score(task="multiclass", average='micro', num_classes=num_class, top_k=1).to(device)
+    recall = Recall(task="multiclass", average='micro', num_classes=num_class, top_k=1).to(device)
+    precision = Precision(task="multiclass", average='micro', num_classes=num_class, top_k=1).to(device)
     
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = 1e10  # 매우 큰 값으로 초기화
@@ -290,11 +290,11 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                     running_loss += loss.item() * inputs.size(0)
                     
                     # Metrics
-                    acc(outputs_prob.float(), labels.int())
-                    auroc(outputs_prob.float(), labels.int())
-                    f1(outputs_prob.float(), labels.int())
-                    recall(outputs_prob.float(), labels.int())
-                    precision(outputs_prob.float(), labels.int())
+                    acc.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                    auroc.update(outputs_prob.float(), labels.int())
+                    f1.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                    recall.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                    precision.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
             else :
                 with torch.no_grad():
                     for inputs, labels in tqdm(dataloader[phase]):
@@ -314,11 +314,11 @@ def train_model(model, criterion, optimizer, num_epochs, decay_step, num_class, 
                         running_loss += loss.item() * inputs.size(0)
                         
                         # Metrics
-                        acc(outputs_prob.float(), labels.int())
-                        auroc(outputs_prob.float(), labels.int())
-                        f1(outputs_prob.float(), labels.int())
-                        recall(outputs_prob.float(), labels.int())
-                        precision(outputs_prob.float(), labels.int())
+                        acc.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                        auroc.update(outputs_prob.float(), labels.int())
+                        f1.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                        recall.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
+                        precision.update(torch.argmax(outputs_prob.float(), dim=-1), labels.int())
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = acc.compute()
